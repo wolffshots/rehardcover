@@ -1,0 +1,22 @@
+# Rustfmt configuration for rehardcover project
+
+# Maximum line width (following user preference for < 120 characters)
+max_width = 100
+
+# Use spaces instead of tabs
+hard_tabs = false
+
+# Number of spaces per tab
+tab_spaces = 4
+
+# Merge derives
+merge_derives = true
+
+# Use field init shorthand if possible
+use_field_init_shorthand = true
+
+# Reorder imports
+reorder_imports = true
+
+# Remove nested parens
+remove_nested_parens = true

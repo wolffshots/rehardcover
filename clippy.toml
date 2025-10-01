@@ -1,0 +1,7 @@
+# Clippy configuration for rehardcover project
+
+# Set the maximum allowed cyclomatic complexity
+cognitive-complexity-threshold = 30
+
+# Enable additional lints
+warn-on-all-wildcard-imports = true
