@@ -42,6 +42,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Build check
+        run: cargo check --verbose
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -63,6 +66,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      
+      - name: Install cynic
+        run: cargo install --locked cynic-cli
+        
+      - name: Fetch Hardcover schema
+        run: cynic introspect --header "Authorization: Bearer ${{env.HARDCOVER_API_KEY}}" https://api.hardcover.app/v1/graphql -o schemas/hardcover.graphql
 
       - name: Build project
-        run: cargo build --verbose --release -- "${{env.HARDCOVER_API_KEY}}"
+        run: cargo build --verbose --release
