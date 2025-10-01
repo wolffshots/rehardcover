@@ -29,6 +29,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            schemas
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -78,6 +79,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            schemas
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
