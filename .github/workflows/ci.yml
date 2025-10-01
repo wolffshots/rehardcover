@@ -69,9 +69,13 @@ jobs:
       
       - name: Install cynic
         run: cargo install --locked cynic-cli
-        
+
       - name: Fetch Hardcover schema
-        run: cynic introspect --header "Authorization: Bearer ${{env.HARDCOVER_API_KEY}}" https://api.hardcover.app/v1/graphql -o schemas/hardcover.graphql
+        run: |
+          cynic introspect \
+            --header "Authorization: Bearer ${{ env.HARDCOVER_API_KEY }}" \
+            https://api.hardcover.app/v1/graphql \
+            -o schemas/hardcover.graphql
 
       - name: Build project
         run: cargo build --verbose --release
