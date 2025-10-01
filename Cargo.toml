@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cynic = { version = "3", features = ["http-surf"] }
+surf = "2"
+async-std = { version = "1", features = ["attributes"] }
+
+[build-dependencies]
+cynic-codegen = { version = "3" }
