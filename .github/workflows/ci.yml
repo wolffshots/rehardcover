@@ -45,7 +45,7 @@ jobs:
           HARDCOVER_API_KEY: ${{ secrets.HARDCOVER_API_KEY }}
         run: |
           cynic introspect \
-            --header "Authorization: Bearer $HARDCOVER_API_KEY" \
+            --header "Authorization: $HARDCOVER_API_KEY" \
             https://api.hardcover.app/v1/graphql \
             -o schemas/hardcover.graphql
 
@@ -95,7 +95,7 @@ jobs:
           HARDCOVER_API_KEY: ${{ secrets.HARDCOVER_API_KEY }}
         run: |
           cynic introspect \
-            --header "Authorization: Bearer $HARDCOVER_API_KEY" \
+            --header "Authorization: $HARDCOVER_API_KEY" \
             https://api.hardcover.app/v1/graphql \
             -o schemas/hardcover.graphql
 
