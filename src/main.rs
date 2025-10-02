@@ -1,4 +1,8 @@
 use std::env;
+use std::io::{self, Write};
+use cynic::{MutationBuilder, QueryBuilder};
+use cynic::http::SurfExt;
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 #[cynic::schema("hardcover")]
 mod schema {}
@@ -150,6 +154,7 @@ struct BookInfo {
 #[derive(cynic::QueryFragment, Debug, Clone)]
 #[cynic(graphql_type = "reading_journals", schema = "hardcover")]
 struct ReadingJournalEntry {
+    id: BigInt,
     entry: Option<String>,
     event: Option<String>,
     #[cynic(rename = "created_at")]
@@ -198,10 +203,45 @@ struct UserBookCreateInput {
     date_added: Option<Date>,
 }
 
+// Input for read instances
+#[derive(cynic::InputObject, Debug)]
+#[cynic(schema = "hardcover")]
+struct DatesReadInput {
+    #[cynic(rename = "edition_id")]
+    edition_id: Option<i32>,
+    #[cynic(rename = "finished_at")]
+    finished_at: Option<Date>,
+    id: Option<i32>,
+    #[cynic(rename = "progress_pages")]
+    progress_pages: Option<i32>,
+    #[cynic(rename = "progress_seconds")]
+    progress_seconds: Option<i32>,
+    #[cynic(rename = "reading_format_id")]
+    reading_format_id: Option<i32>,
+    #[cynic(rename = "started_at")]
+    started_at: Option<Date>,
+}
+
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "UserBookIdType", schema = "hardcover")]
 struct UserBookIdType {
     id: Option<i32>,
+}
+
+// Return types for read instances
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "UserBooksReadUpsertType", schema = "hardcover")]
+struct UserBooksReadUpsertType {
+    error: Option<String>,
+    #[cynic(rename = "user_book_id")]
+    user_book_id: Option<i32>,
+}
+
+// Return type for deleting journal entries
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "DeleteReadingJournalOutput", schema = "hardcover")]
+struct DeleteReadingJournalOutput {
+    id: i32,
 }
 
 #[derive(cynic::QueryVariables, Debug)]
@@ -237,6 +277,104 @@ struct InsertUserBookMutation {
     #[arguments(object: $object)]
     #[cynic(rename = "insert_user_book")]
     insert_user_book: Option<UserBookIdType>,
+}
+
+// Return type for inserting user book reads
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "UserBookReadIdType", schema = "hardcover")]
+struct UserBookReadIdType {
+    error: Option<String>,
+    id: Option<i32>,
+}
+
+// Variables and mutation for inserting read instances
+#[derive(cynic::QueryVariables, Debug)]
+struct InsertUserBookReadVariables {
+    #[cynic(rename = "user_book_id")]
+    user_book_id: i32,
+    #[cynic(rename = "user_book_read")]
+    user_book_read: DatesReadInput,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "mutation_root",
+    variables = "InsertUserBookReadVariables",
+    schema = "hardcover"
+)]
+struct InsertUserBookReadMutation {
+    #[arguments(user_book_id: $user_book_id, user_book_read: $user_book_read)]
+    #[cynic(rename = "insert_user_book_read")]
+    insert_user_book_read: Option<UserBookReadIdType>,
+}
+
+// Variables and mutation for deleting journal entries
+#[derive(cynic::QueryVariables, Debug)]
+struct DeleteReadingJournalVariables {
+    id: i32,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "mutation_root",
+    variables = "DeleteReadingJournalVariables",
+    schema = "hardcover"
+)]
+struct DeleteReadingJournalMutation {
+    #[arguments(id: $id)]
+    #[cynic(rename = "delete_reading_journal")]
+    delete_reading_journal: Option<DeleteReadingJournalOutput>,
+}
+
+// Variables and mutation for deleting user book reads
+#[derive(cynic::QueryVariables, Debug)]
+struct DeleteUserBookReadVariables {
+    id: i32,
+}
+
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "mutation_root",
+    variables = "DeleteUserBookReadVariables",
+    schema = "hardcover"
+)]
+struct DeleteUserBookReadMutation {
+    #[arguments(id: $id)]
+    #[cynic(rename = "delete_user_book_read")]
+    delete_user_book_read: Option<UserBookReadIdType>,
+}
+
+// Query fragment for user book reads
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(graphql_type = "user_book_reads", schema = "hardcover")]
+struct UserBookRead {
+    id: i32,
+    #[cynic(rename = "started_at")]
+    started_at: Option<Date>,
+    #[cynic(rename = "finished_at")]
+    finished_at: Option<Date>,
+    #[cynic(rename = "user_book_id")]
+    user_book_id: i32,
+}
+
+// Variables for querying user book reads
+#[derive(cynic::QueryVariables, Debug)]
+struct UserBookReadsVariables {
+    #[cynic(rename = "user_book_id")]
+    user_book_id: i32,
+}
+
+// Query for user book reads
+#[derive(cynic::QueryFragment, Debug)]
+#[cynic(
+    graphql_type = "query_root",
+    variables = "UserBookReadsVariables",
+    schema = "hardcover"
+)]
+struct UserBookReadsQuery {
+    #[arguments(where: { user_book_id: { _eq: $user_book_id } })]
+    #[cynic(rename = "user_book_reads")]
+    user_book_reads: Vec<UserBookRead>,
 }
 
 struct Cli {
@@ -366,8 +504,28 @@ async fn insert_user_book(
     book_id: i32,
     status_id: Option<i32>,
 ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
-    // Return a mock user_book_id for now
-    Ok(Some(999))
+    let variables = InsertUserBookVariables {
+        object: UserBookCreateInput {
+            book_id,
+            status_id,
+            date_added: None, // Let the API set the current date
+        },
+    };
+    
+    let operation = InsertUserBookMutation::build(variables);
+    
+    let response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    if let Some(data) = response.data {
+        if let Some(result) = data.insert_user_book {
+            return Ok(result.id);
+        }
+    }
+    
+    Ok(None)
 }
 
 async fn update_user_book_status(
@@ -375,8 +533,338 @@ async fn update_user_book_status(
     user_book_id: i32,
     new_status_id: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Would update user book {} to status {}", user_book_id, new_status_id);
+    let variables = UpdateUserBookVariables {
+        id: user_book_id,
+        object: UserBookUpdateInput {
+            status_id: Some(new_status_id),
+        },
+    };
+    
+    let operation = UpdateUserBookMutation::build(variables);
+    
+    let _response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    // The response is handled by surf's run_graphql, so if we get here, it succeeded
     Ok(())
+}
+
+// Function to convert timestamp to date format (YYYY-MM-DD)
+fn timestamp_to_date(timestamp_str: &str) -> Option<String> {
+    // Try to parse the timestamp and extract just the date part
+    if let Ok(time) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
+        Some(time.format("%Y-%m-%d").to_string())
+    } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S%.f") {
+        Some(time.format("%Y-%m-%d").to_string())
+    } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S") {
+        Some(time.format("%Y-%m-%d").to_string())
+    } else if timestamp_str.len() >= 10 && timestamp_str.chars().nth(4) == Some('-') {
+        // If it's already in YYYY-MM-DD format or starts with it
+        Some(timestamp_str[..10].to_string())
+    } else {
+        None
+    }
+}
+
+// Function to create read instances
+async fn insert_user_book_read(
+    api_key: &str,
+    user_book_id: i32,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Convert timestamps to date format (YYYY-MM-DD) that the API expects
+    let start_date_formatted = start_date.and_then(timestamp_to_date);
+    let end_date_formatted = end_date.and_then(timestamp_to_date);
+    
+    println!("    🔧 Formatted dates - start: {:?}, end: {:?}", start_date_formatted, end_date_formatted);
+    
+    // Create a read instance with the provided dates (only include essential fields)
+    let user_book_read = DatesReadInput {
+        edition_id: None,
+        finished_at: end_date_formatted.map(|d| Date(d)),
+        id: None,
+        progress_pages: None,
+        progress_seconds: None,
+        reading_format_id: None,
+        started_at: start_date_formatted.map(|d| Date(d)),
+    };
+    
+    let variables = InsertUserBookReadVariables {
+        user_book_id,
+        user_book_read,
+    };
+    
+    let operation = InsertUserBookReadMutation::build(variables);
+    
+    let response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    if let Some(data) = response.data {
+        if let Some(result) = data.insert_user_book_read {
+            if let Some(error) = result.error {
+                return Err(format!("API error: {}", error).into());
+            }
+            if let Some(id) = result.id {
+                println!("    📖 Created read instance with ID: {}", id);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+// Function to delete a reading journal entry
+async fn delete_reading_journal_entry(
+    api_key: &str,
+    journal_id: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let variables = DeleteReadingJournalVariables {
+        id: journal_id,
+    };
+    
+    let operation = DeleteReadingJournalMutation::build(variables);
+    
+    let response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    if let Some(data) = response.data {
+        if let Some(result) = data.delete_reading_journal {
+            println!("    🗑️ Deleted journal entry ID: {}", result.id);
+        }
+    }
+    
+    Ok(())
+}
+
+// Function to query existing user book reads
+async fn fetch_user_book_reads(
+    api_key: &str,
+    user_book_id: i32,
+) -> Result<Vec<UserBookRead>, Box<dyn std::error::Error>> {
+    let variables = UserBookReadsVariables { user_book_id };
+    let operation = UserBookReadsQuery::build(variables);
+    
+    let response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    if let Some(data) = response.data {
+        Ok(data.user_book_reads)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+// Function to delete a user book read
+async fn delete_user_book_read(
+    api_key: &str,
+    read_id: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let variables = DeleteUserBookReadVariables { id: read_id };
+    let operation = DeleteUserBookReadMutation::build(variables);
+    
+    let response = surf::post("https://api.hardcover.app/v1/graphql")
+        .header("Authorization", api_key)
+        .run_graphql(operation)
+        .await?;
+    
+    if let Some(data) = response.data {
+        if let Some(result) = data.delete_user_book_read {
+            if let Some(error) = result.error {
+                return Err(format!("API error: {}", error).into());
+            }
+            if let Some(id) = result.id {
+                println!("    🗑️ Deleted default read instance with ID: {}", id);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+// Function to check if a timestamp is within the last 24 hours
+fn is_within_last_day(timestamp_str: &str) -> bool {
+    // Parse the timestamp string (format: "2024-01-15T10:30:00+00:00" or similar)
+    // For safety, we'll be conservative and only delete if we can parse the timestamp
+    
+    // Try to parse various timestamp formats
+    let parsed_time = if let Ok(time) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
+        time.timestamp() as u64
+    } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S%.f") {
+        // Handle microseconds: 2025-10-02T08:44:58.937879
+        time.and_utc().timestamp() as u64
+    } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S") {
+        time.and_utc().timestamp() as u64
+    } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S") {
+        time.and_utc().timestamp() as u64
+    } else {
+        // If we can't parse the timestamp, err on the side of caution and don't delete
+        println!("    ⚠ Could not parse timestamp '{}' - skipping deletion for safety", timestamp_str);
+        return false;
+    };
+    
+    // Get current time
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs();
+    
+    // Check if the entry is within the last 24 hours (86400 seconds)
+    let time_diff = now.saturating_sub(parsed_time);
+    let is_recent = time_diff <= 86400; // 24 hours in seconds
+    
+    if !is_recent {
+        println!("    ⚠ Journal entry is {} hours old - too old to delete safely", time_diff / 3600);
+    }
+    
+    is_recent
+}
+
+// Function to get user approval for a book update
+fn get_user_approval(book_title: &str, status_name: &str, start_date: Option<&str>, end_date: Option<&str>, current: usize, total: usize) -> bool {
+    println!("\n[{}/{}] 📚 Book: '{}'", current, total, book_title);
+    println!("📊 Suggested Status: {}", status_name);
+    
+    if let Some(start) = start_date {
+        if let Some(end) = end_date {
+            println!("📅 Read Instance: {} to {}", start, end);
+        } else {
+            println!("📅 Read Instance: {} to ?", start);
+        }
+    } else if let Some(end) = end_date {
+        println!("📅 Read Instance: ? to {}", end);
+    }
+    
+    print!("❓ Apply this update? [y/N]: ");
+    io::stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let input = input.trim().to_lowercase();
+    
+    matches!(input.as_str(), "y" | "yes")
+}
+
+// Function to ask user about date preferences for "Read" status
+fn ask_about_read_dates(start_date: Option<&str>, end_date: Option<&str>) -> bool {
+    if start_date.is_none() && end_date.is_none() {
+        return false; // No dates available
+    }
+    
+    println!("📅 Available dates from journal:");
+    if let Some(start) = start_date {
+        println!("   Start: {}", start);
+    }
+    if let Some(end) = end_date {
+        println!("   End: {}", end);
+    }
+    
+    print!("❓ Use these dates for the read instance? [y/N] (N = set dates manually later): ");
+    io::stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let input = input.trim().to_lowercase();
+    
+    matches!(input.as_str(), "y" | "yes")
+}
+
+// Function to check if a book was recently processed by our tool (has status change journal entries within last 5 minutes)
+async fn has_recent_status_changes(
+    api_key: &str,
+    book_id: i32,
+    user_id: i32,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    // Fetch recent journal entries
+    let journals = fetch_reading_journals(api_key, user_id, 10, 0).await?;
+    
+    // Look for very recent status change events that would indicate our tool just processed this book
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::from_secs(0))
+        .as_secs();
+    
+    for entry in journals.reading_journals {
+        if let Some(book) = &entry.book {
+            if book.id == book_id {
+                // Look for status change events (not the original reading events)
+                if let Some(event) = &entry.event {
+                    // Skip the original reading events we're trying to process
+                    if event == "user_book_read_started" || event == "user_book_read_finished" || event == "status_want_to_read" {
+                        continue;
+                    }
+                    
+                    // Look for status change events that would indicate our tool processed this
+                    if event.contains("status") || event.contains("added") || event.contains("updated") {
+                        let entry_timestamp = get_priority_timestamp(&entry);
+                        
+                        // Check if this status change was very recent (within last 5 minutes)
+                        if let Ok(time) = chrono::DateTime::parse_from_rfc3339(&entry_timestamp) {
+                            let entry_time = time.timestamp() as u64;
+                            let time_diff = now.saturating_sub(entry_time);
+                            
+                            if time_diff <= 300 { // 5 minutes
+                                return Ok(true);
+                            }
+                        } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(&entry_timestamp, "%Y-%m-%dT%H:%M:%S%.f") {
+                            let entry_time = time.and_utc().timestamp() as u64;
+                            let time_diff = now.saturating_sub(entry_time);
+                            
+                            if time_diff <= 300 {
+                                return Ok(true);
+                            }
+                        } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(&entry_timestamp, "%Y-%m-%dT%H:%M:%S") {
+                            let entry_time = time.and_utc().timestamp() as u64;
+                            let time_diff = now.saturating_sub(entry_time);
+                            
+                            if time_diff <= 300 {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(false)
+}
+
+// Function to find the most recent journal entry for a book (to delete after mutation)
+async fn find_latest_journal_entry_for_book(
+    api_key: &str,
+    book_id: i32,
+    user_id: i32,
+) -> Result<Option<(i32, String)>, Box<dyn std::error::Error>> {
+    // Fetch recent journal entries
+    let journals = fetch_reading_journals(api_key, user_id, 20, 0).await?;
+    
+    // Find the most recent entry for this book
+    let mut latest_entry_info = None;
+    let mut latest_timestamp = String::new();
+    
+    for entry in journals.reading_journals {
+        if let Some(book) = &entry.book {
+            if book.id == book_id {
+                let entry_timestamp = get_priority_timestamp(&entry);
+                if latest_timestamp.is_empty() || entry_timestamp > latest_timestamp {
+                    latest_timestamp = entry_timestamp.clone();
+                    // Convert BigInt to i32 for the delete mutation and include timestamp
+                    latest_entry_info = Some((entry.id.0 as i32, entry_timestamp));
+                }
+            }
+        }
+    }
+    
+    Ok(latest_entry_info)
 }
 
 async fn fetch_reading_journals(
@@ -456,7 +944,7 @@ async fn fetch_all_reading_journals(
     Ok(all_journals)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct BookStatusAnalysis {
     suggested_status_id: Option<i32>,
     start_date: Option<String>,
@@ -694,6 +1182,7 @@ fn analyze_journal_entries(
 async fn process_book_status_update(
     api_key: &str,
     user_id: i32,
+    analysis_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Book Status Update Process ===");
     
@@ -783,6 +1272,9 @@ async fn process_book_status_update(
     let mut books_already_in_library = 0;
     let mut books_with_excluded_status = 0;
     
+    // Collect books that need to be added (not in library)
+    let mut books_to_add = Vec::new();
+    
     for (book_id, journal_entries) in &journals_by_book {
         total_books_analyzed += 1;
         
@@ -833,39 +1325,170 @@ async fn process_book_status_update(
                 *books_to_add_counts.entry(status_name.to_string()).or_insert(0) += 1;
                 
                 // Print simplified analysis
-                let start_date_str = analysis.start_date.as_deref().unwrap_or("?");
-                let end_date_str = analysis.end_date.as_deref().unwrap_or("?");
+                let _start_date_str = analysis.start_date.as_deref().unwrap_or("?");
+                let _end_date_str = analysis.end_date.as_deref().unwrap_or("?");
                 
-                println!("Book '{}'", book_title);
-                match status_name {
-                    "Read" => {
-                        if analysis.start_date.is_some() && analysis.end_date.is_some() {
-                            println!("    {}: {} to {}", status_name, start_date_str, end_date_str);
-                        } else if analysis.end_date.is_some() {
-                            println!("    {}: ? to {}", status_name, end_date_str);
-                        } else {
-                            println!("    {}: ?", status_name);
-                        }
-                    }
-                    "Currently Reading" => {
-                        if analysis.start_date.is_some() {
-                            println!("    {}: {} to ?", status_name, start_date_str);
-                        } else {
-                            println!("    {}: ?", status_name);
-                        }
-                    }
-                    _ => {
-                        println!("    {}: ?", status_name);
-                    }
+                // Store book for later processing with user approval
+                if !analysis_only {
+                    books_to_add.push((book_title.to_string(), *book_id, suggested_status_id, analysis.clone()));
                 }
-                
+            } else {
+                println!("    Could not determine appropriate status from journal entries");
+            }
+        }
+    }
+
+    // Process books to add with progress tracking
+    if !books_to_add.is_empty() && !analysis_only {
+        println!("\n=== PROCESSING BOOKS TO ADD ===");
+        let total_to_add = books_to_add.len();
+        
+        for (current_idx, (book_title, book_id, suggested_status_id, analysis)) in books_to_add.iter().enumerate() {
+            let status_name = available_statuses
+                .iter()
+                .find(|s| s.id == *suggested_status_id)
+                .map(|s| s.status.as_str())
+                .unwrap_or("unknown");
+            
+            // Check if user approves this update with progress tracking
+            if get_user_approval(
+                book_title,
+                status_name,
+                analysis.start_date.as_deref(),
+                analysis.end_date.as_deref(),
+                current_idx + 1,
+                total_to_add,
+            ) {
                 // Add this book to the library with the suggested status
-                match insert_user_book(api_key, *book_id, Some(suggested_status_id)).await {
+                match insert_user_book(api_key, *book_id, Some(*suggested_status_id)).await {
                     Ok(Some(new_user_book_id)) => {
-                        // println!("    ✓ Added book to library with user_book ID: {}", new_user_book_id);
+                        println!("    ✅ Added book to library with user_book ID: {}", new_user_book_id);
                         
-                        // Create a mock UserBookWithOptionalStatus for this newly added book
-                        // Note: In a real implementation, we'd fetch the actual created record
+                        // Find and delete the journal entry created by the mutation
+                        match find_latest_journal_entry_for_book(api_key, *book_id, user_id).await {
+                            Ok(Some((journal_id, timestamp))) => {
+                                // Safety check: only delete if the entry is within the last day
+                                if is_within_last_day(&timestamp) {
+                                    match delete_reading_journal_entry(api_key, journal_id).await {
+                                        Ok(()) => {
+                                            // Journal entry deleted successfully
+                                        }
+                                        Err(e) => {
+                                            println!("    ⚠ Failed to delete journal entry: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    println!("    ⚠ Skipping journal deletion - entry too old for safety");
+                                }
+                            }
+                            Ok(None) => {
+                                println!("    ⚠ No journal entry found to delete");
+                            }
+                            Err(e) => {
+                                println!("    ⚠ Failed to find journal entry: {}", e);
+                            }
+                        }
+                        
+                        // Handle read instance creation based on status
+                        if status_name == "Read" {
+                            // For "Read" status, ask user about date preferences
+                            let use_dates = if analysis.start_date.is_some() || analysis.end_date.is_some() {
+                                ask_about_read_dates(analysis.start_date.as_deref(), analysis.end_date.as_deref())
+                            } else {
+                                false
+                            };
+                            
+                            if use_dates {
+                                // Create read instance with dates
+                                println!("    📅 Creating read instance with start: {:?}, end: {:?}", 
+                                         analysis.start_date, analysis.end_date);
+                                match insert_user_book_read(
+                                    api_key,
+                                    new_user_book_id,
+                                    analysis.start_date.as_deref(),
+                                    analysis.end_date.as_deref(),
+                                ).await {
+                                    Ok(()) => {
+                                        println!("    ✅ Created read instance with dates");
+                                        
+                                        // Delete any default "? - ?" read instances
+                                        match fetch_user_book_reads(api_key, new_user_book_id).await {
+                                            Ok(existing_reads) => {
+                                                for read in existing_reads {
+                                                    // Delete reads that have no dates (default "? - ?")
+                                                    if read.started_at.is_none() && read.finished_at.is_none() {
+                                                        println!("    🗑️ Found default read instance (no dates), deleting ID: {}", read.id);
+                                                        if let Err(e) = delete_user_book_read(api_key, read.id).await {
+                                                            println!("    ⚠ Failed to delete default read: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("    ⚠ Failed to fetch existing reads: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("    ⚠ Failed to create read instance: {}", e);
+                                    }
+                                }
+                            } else {
+                                println!("    📝 User chose to set read dates manually later");
+                            }
+                        } else if status_name == "Currently Reading" && (analysis.start_date.is_some() || analysis.end_date.is_some()) {
+                            // For "Currently Reading", always create if we have dates
+                            println!("    📅 Creating read instance with start: {:?}, end: {:?}", 
+                                     analysis.start_date, analysis.end_date);
+                            match insert_user_book_read(
+                                api_key,
+                                new_user_book_id,
+                                analysis.start_date.as_deref(),
+                                analysis.end_date.as_deref(),
+                            ).await {
+                                Ok(()) => {
+                                    println!("    ✅ Created read instance with dates");
+                                    
+                                    // Delete any automatically created read instances
+                                    match fetch_user_book_reads(api_key, new_user_book_id).await {
+                                        Ok(existing_reads) => {
+                                            for read in existing_reads {
+                                                // Delete reads that are either:
+                                                // 1. Default "? - ?" (no dates)
+                                                // 2. Auto-created "Currently Reading" (start date = today, no end date)
+                                                let should_delete = if read.started_at.is_none() && read.finished_at.is_none() {
+                                                    // Default read instance
+                                                    true
+                                                } else if read.finished_at.is_none() && read.started_at.is_some() {
+                                                    // Check if start date is today (auto-created)
+                                                    if let Some(start_date) = &read.started_at {
+                                                        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                                        start_date.0 == today
+                                                    } else {
+                                                        false
+                                                    }
+                                                } else {
+                                                    false
+                                                };
+                                                
+                                                if should_delete {
+                                                    println!("    🗑️ Found auto-created read instance, deleting ID: {}", read.id);
+                                                    if let Err(e) = delete_user_book_read(api_key, read.id).await {
+                                                        println!("    ⚠ Failed to delete auto-created read: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("    ⚠ Failed to fetch existing reads: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("    ⚠ Failed to create read instance: {}", e);
+                                }
+                            }
+                        }
                     }
                     Ok(None) => {
                         println!("    ⚠ Book added but no ID returned");
@@ -875,12 +1498,188 @@ async fn process_book_status_update(
                     }
                 }
             } else {
-                println!("    Could not determine appropriate status from journal entries");
+                println!("    ⏭ Skipped by user");
             }
         }
     }
 
     println!("Found {} candidate books (books with journal entries, in library, and no excluded status)", candidate_books.len());
+
+    // Process candidate books (existing books that need status updates)
+    if !candidate_books.is_empty() && !analysis_only {
+        println!("\n=== PROCESSING EXISTING BOOKS ===");
+        let total_candidates = candidate_books.len();
+        
+        for (current_idx, user_book) in candidate_books.iter().enumerate() {
+            let book_title = user_book.book.title.as_deref().unwrap_or("Unknown Book");
+            let book_id = user_book.book.id;
+            
+            // Get journal entries for this book
+            if let Some(journal_entries) = journals_by_book.get(&book_id) {
+                let entries_vec: Vec<ReadingJournalEntry> = journal_entries.iter().map(|e| (*e).clone()).collect();
+                let analysis = analyze_journal_entries(&entries_vec, available_statuses);
+                
+                if let Some(suggested_status_id) = analysis.suggested_status_id {
+                    let status_name = available_statuses
+                        .iter()
+                        .find(|s| s.id == suggested_status_id)
+                        .map(|s| s.status.as_str())
+                        .unwrap_or("unknown");
+                    
+                    // Check if user approves this update
+                    if get_user_approval(
+                        book_title,
+                        status_name,
+                        analysis.start_date.as_deref(),
+                        analysis.end_date.as_deref(),
+                        current_idx + 1,
+                        total_candidates,
+                    ) {
+                        // Note: Removed automatic recent processing check to avoid false positives
+                        // User confirmation is sufficient protection against double-processing
+                        
+                        // Update the existing book's status
+                        match update_user_book_status(api_key, user_book.id, suggested_status_id).await {
+                            Ok(()) => {
+                                println!("    ✅ Updated book status to '{}'", status_name);
+                                
+                                // Find and delete the journal entry created by the mutation
+                                match find_latest_journal_entry_for_book(api_key, book_id, user_id).await {
+                                    Ok(Some((journal_id, timestamp))) => {
+                                        // Safety check: only delete if the entry is within the last day
+                                        if is_within_last_day(&timestamp) {
+                                            match delete_reading_journal_entry(api_key, journal_id).await {
+                                                Ok(()) => {
+                                                    // Journal entry deleted successfully
+                                                }
+                                                Err(e) => {
+                                                    println!("    ⚠ Failed to delete journal entry: {}", e);
+                                                }
+                                            }
+                                        } else {
+                                            println!("    ⚠ Skipping journal deletion - entry too old for safety");
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        println!("    ⚠ No journal entry found to delete");
+                                    }
+                                    Err(e) => {
+                                        println!("    ⚠ Failed to find journal entry: {}", e);
+                                    }
+                                }
+                                
+                                // Handle read instance creation based on status
+                                if status_name == "Read" {
+                                    // For "Read" status, ask user about date preferences
+                                    let use_dates = if analysis.start_date.is_some() || analysis.end_date.is_some() {
+                                        ask_about_read_dates(analysis.start_date.as_deref(), analysis.end_date.as_deref())
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    if use_dates {
+                                        // Create read instance with dates
+                                        println!("    📅 Creating read instance with start: {:?}, end: {:?}", 
+                                                 analysis.start_date, analysis.end_date);
+                                        match insert_user_book_read(
+                                            api_key,
+                                            user_book.id,
+                                            analysis.start_date.as_deref(),
+                                            analysis.end_date.as_deref(),
+                                        ).await {
+                                            Ok(()) => {
+                                                println!("    ✅ Created read instance with dates");
+                                                
+                                                // Delete any default "? - ?" read instances
+                                                match fetch_user_book_reads(api_key, user_book.id).await {
+                                                    Ok(existing_reads) => {
+                                                        for read in existing_reads {
+                                                            // Delete reads that have no dates (default "? - ?")
+                                                            if read.started_at.is_none() && read.finished_at.is_none() {
+                                                                println!("    🗑️ Found default read instance (no dates), deleting ID: {}", read.id);
+                                                                if let Err(e) = delete_user_book_read(api_key, read.id).await {
+                                                                    println!("    ⚠ Failed to delete default read: {}", e);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        println!("    ⚠ Failed to fetch existing reads: {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("    ⚠ Failed to create read instance: {}", e);
+                                            }
+                                        }
+                                    } else {
+                                        println!("    📝 User chose to set read dates manually later");
+                                    }
+                                } else if status_name == "Currently Reading" && (analysis.start_date.is_some() || analysis.end_date.is_some()) {
+                                    // For "Currently Reading", always create if we have dates
+                                    println!("    📅 Creating read instance with start: {:?}, end: {:?}", 
+                                             analysis.start_date, analysis.end_date);
+                                    match insert_user_book_read(
+                                        api_key,
+                                        user_book.id,
+                                        analysis.start_date.as_deref(),
+                                        analysis.end_date.as_deref(),
+                                    ).await {
+                                        Ok(()) => {
+                                            println!("    ✅ Created read instance with dates");
+                                            
+                                            // Delete any automatically created read instances
+                                            match fetch_user_book_reads(api_key, user_book.id).await {
+                                                Ok(existing_reads) => {
+                                                    for read in existing_reads {
+                                                        // Delete reads that are either:
+                                                        // 1. Default "? - ?" (no dates)
+                                                        // 2. Auto-created "Currently Reading" (start date = today, no end date)
+                                                        let should_delete = if read.started_at.is_none() && read.finished_at.is_none() {
+                                                            // Default read instance
+                                                            true
+                                                        } else if read.finished_at.is_none() && read.started_at.is_some() {
+                                                            // Check if start date is today (auto-created)
+                                                            if let Some(start_date) = &read.started_at {
+                                                                let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                                                start_date.0 == today
+                                                            } else {
+                                                                false
+                                                            }
+                                                        } else {
+                                                            false
+                                                        };
+                                                        
+                                                        if should_delete {
+                                                            println!("    🗑️ Found auto-created read instance, deleting ID: {}", read.id);
+                                                            if let Err(e) = delete_user_book_read(api_key, read.id).await {
+                                                                println!("    ⚠ Failed to delete auto-created read: {}", e);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    println!("    ⚠ Failed to fetch existing reads: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("    ⚠ Failed to create read instance: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("    ✗ Failed to update book status: {}", e);
+                            }
+                        }
+                    } else {
+                        println!("    ⏭ Skipped by user");
+                    }
+                }
+            }
+        }
+    }
 
     // Print summary statistics
     println!("\n=== SUMMARY ===");
@@ -1123,10 +1922,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for (entry_idx, entry) in sorted_entries.iter().take(display_limit).enumerate() {
                     println!(
-                        "     {}. {} - {}",
+                        "     {}. {} - {} (created: {} updated: {})",
                         entry_idx + 1,
                         get_priority_timestamp(entry),
-                        entry.event.as_deref().unwrap_or("No event")
+                        entry.event.as_deref().unwrap_or("No event"),
+                        entry.created_at.0,
+                        entry.updated_at.0
                     );
 
                     if let Some(entry_text) = &entry.entry {
@@ -1217,14 +2018,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Run the book status update process (unless analysis-only mode)
-        if !cli_args.analysis_only {
-            println!("\n{}", "=".repeat(50));
-            match process_book_status_update(&cli_args.api_key, user.id).await {
-                Ok(()) => println!("Book status update process completed successfully."),
-                Err(e) => eprintln!("Book status update process failed: {}", e),
-            }
-        } else {
+        // Run the book status update process
+        println!("\n{}", "=".repeat(50));
+        match process_book_status_update(&cli_args.api_key, user.id, cli_args.analysis_only).await {
+            Ok(()) => {
+                if cli_args.analysis_only {
+                    println!("Analysis completed successfully.");
+                } else {
+                    println!("Book status update process completed successfully.");
+                }
+            },
+            Err(e) => eprintln!("Process failed: {}", e),
+        }
+        
+        if cli_args.analysis_only {
             println!("\n{}", "=".repeat(50));
             println!("Skipping book status update process (analysis-only mode)");
             println!("To run the full process including status updates, run without --analysis-only flag");
