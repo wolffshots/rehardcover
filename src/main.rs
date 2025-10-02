@@ -62,7 +62,9 @@ struct BookDetails {
 struct UserBookStatus {
     id: i32,
     status: String,
+    #[allow(dead_code)]
     slug: Option<String>,
+    #[allow(dead_code)]
     description: Option<String>,
 }
 
@@ -81,16 +83,6 @@ struct UserBookWithOptionalStatus {
     status_id: Option<i32>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "user_books", schema = "hardcover")]
-struct UserBookWithStatus {
-    id: i32,
-    book: BookDetails,
-    #[cynic(rename = "status_id")]
-    status_id: i32,
-    #[cynic(rename = "user_book_status")]
-    user_book_status: UserBookStatus,
-}
 
 #[derive(cynic::QueryVariables, Debug)]
 struct UserBooksVariables {
@@ -111,17 +103,6 @@ struct UserBooksQuery {
     user_books: Vec<UserBookDetails>,
 }
 
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(
-    graphql_type = "query_root",
-    variables = "UserBooksVariables",
-    schema = "hardcover"
-)]
-struct UserBooksWithStatusQuery {
-    #[arguments(where: { user_id: { _eq: $user_id } }, distinct_on: "book_id", limit: $limit, offset: $offset)]
-    #[cynic(rename = "user_books")]
-    user_books: Vec<UserBookWithStatus>,
-}
 
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "query_root", schema = "hardcover")]
@@ -228,14 +209,6 @@ struct UserBookIdType {
     id: Option<i32>,
 }
 
-// Return types for read instances
-#[derive(cynic::QueryFragment, Debug)]
-#[cynic(graphql_type = "UserBooksReadUpsertType", schema = "hardcover")]
-struct UserBooksReadUpsertType {
-    error: Option<String>,
-    #[cynic(rename = "user_book_id")]
-    user_book_id: Option<i32>,
-}
 
 // Return type for deleting journal entries
 #[derive(cynic::QueryFragment, Debug)]
@@ -259,6 +232,7 @@ struct UpdateUserBookVariables {
 struct UpdateUserBookMutation {
     #[arguments(id: $id, object: $object)]
     #[cynic(rename = "update_user_book")]
+    #[allow(dead_code)]
     update_user_book: Option<UserBookIdType>,
 }
 
@@ -354,6 +328,7 @@ struct UserBookRead {
     #[cynic(rename = "finished_at")]
     finished_at: Option<Date>,
     #[cynic(rename = "user_book_id")]
+    #[allow(dead_code)]
     user_book_id: i32,
 }
 
@@ -445,32 +420,6 @@ async fn fetch_user_book_statuses(api_key: &str) -> Result<UserBookStatusesQuery
     response.data.ok_or("No data returned".into())
 }
 
-async fn fetch_user_books_with_status(
-    api_key: &str,
-    user_id: i32,
-    limit: i32,
-    offset: i32,
-) -> Result<UserBooksWithStatusQuery, Box<dyn std::error::Error>> {
-    use cynic::{QueryBuilder, http::SurfExt};
-
-    let operation = UserBooksWithStatusQuery::build(UserBooksVariables {
-        user_id,
-        limit,
-        offset,
-    });
-
-    let response = surf::post("https://api.hardcover.app/v1/graphql")
-        .header("Authorization", api_key)
-        .run_graphql(operation)
-        .await?;
-
-    if let Some(errors) = response.errors {
-        eprintln!("GraphQL errors: {:?}", errors);
-        return Err("GraphQL query failed".into());
-    }
-
-    response.data.ok_or("No data returned".into())
-}
 
 async fn fetch_user_books_with_optional_status(
     api_key: &str,
@@ -519,11 +468,10 @@ async fn insert_user_book(
         .run_graphql(operation)
         .await?;
     
-    if let Some(data) = response.data {
-        if let Some(result) = data.insert_user_book {
+    if let Some(data) = response.data
+        && let Some(result) = data.insert_user_book {
             return Ok(result.id);
         }
-    }
     
     Ok(None)
 }
@@ -584,12 +532,12 @@ async fn insert_user_book_read(
     // Create a read instance with the provided dates (only include essential fields)
     let user_book_read = DatesReadInput {
         edition_id: None,
-        finished_at: end_date_formatted.map(|d| Date(d)),
+        finished_at: end_date_formatted.map(Date),
         id: None,
         progress_pages: None,
         progress_seconds: None,
         reading_format_id: None,
-        started_at: start_date_formatted.map(|d| Date(d)),
+        started_at: start_date_formatted.map(Date),
     };
     
     let variables = InsertUserBookReadVariables {
@@ -604,8 +552,8 @@ async fn insert_user_book_read(
         .run_graphql(operation)
         .await?;
     
-    if let Some(data) = response.data {
-        if let Some(result) = data.insert_user_book_read {
+    if let Some(data) = response.data
+        && let Some(result) = data.insert_user_book_read {
             if let Some(error) = result.error {
                 return Err(format!("API error: {}", error).into());
             }
@@ -613,7 +561,6 @@ async fn insert_user_book_read(
                 println!("    📖 Created read instance with ID: {}", id);
             }
         }
-    }
     
     Ok(())
 }
@@ -634,11 +581,10 @@ async fn delete_reading_journal_entry(
         .run_graphql(operation)
         .await?;
     
-    if let Some(data) = response.data {
-        if let Some(result) = data.delete_reading_journal {
+    if let Some(data) = response.data
+        && let Some(result) = data.delete_reading_journal {
             println!("    🗑️ Deleted journal entry ID: {}", result.id);
         }
-    }
     
     Ok(())
 }
@@ -676,8 +622,8 @@ async fn delete_user_book_read(
         .run_graphql(operation)
         .await?;
     
-    if let Some(data) = response.data {
-        if let Some(result) = data.delete_user_book_read {
+    if let Some(data) = response.data
+        && let Some(result) = data.delete_user_book_read {
             if let Some(error) = result.error {
                 return Err(format!("API error: {}", error).into());
             }
@@ -685,7 +631,6 @@ async fn delete_user_book_read(
                 println!("    🗑️ Deleted default read instance with ID: {}", id);
             }
         }
-    }
     
     Ok(())
 }
@@ -777,66 +722,6 @@ fn ask_about_read_dates(start_date: Option<&str>, end_date: Option<&str>) -> boo
     matches!(input.as_str(), "y" | "yes")
 }
 
-// Function to check if a book was recently processed by our tool (has status change journal entries within last 5 minutes)
-async fn has_recent_status_changes(
-    api_key: &str,
-    book_id: i32,
-    user_id: i32,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    // Fetch recent journal entries
-    let journals = fetch_reading_journals(api_key, user_id, 10, 0).await?;
-    
-    // Look for very recent status change events that would indicate our tool just processed this book
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::from_secs(0))
-        .as_secs();
-    
-    for entry in journals.reading_journals {
-        if let Some(book) = &entry.book {
-            if book.id == book_id {
-                // Look for status change events (not the original reading events)
-                if let Some(event) = &entry.event {
-                    // Skip the original reading events we're trying to process
-                    if event == "user_book_read_started" || event == "user_book_read_finished" || event == "status_want_to_read" {
-                        continue;
-                    }
-                    
-                    // Look for status change events that would indicate our tool processed this
-                    if event.contains("status") || event.contains("added") || event.contains("updated") {
-                        let entry_timestamp = get_priority_timestamp(&entry);
-                        
-                        // Check if this status change was very recent (within last 5 minutes)
-                        if let Ok(time) = chrono::DateTime::parse_from_rfc3339(&entry_timestamp) {
-                            let entry_time = time.timestamp() as u64;
-                            let time_diff = now.saturating_sub(entry_time);
-                            
-                            if time_diff <= 300 { // 5 minutes
-                                return Ok(true);
-                            }
-                        } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(&entry_timestamp, "%Y-%m-%dT%H:%M:%S%.f") {
-                            let entry_time = time.and_utc().timestamp() as u64;
-                            let time_diff = now.saturating_sub(entry_time);
-                            
-                            if time_diff <= 300 {
-                                return Ok(true);
-                            }
-                        } else if let Ok(time) = chrono::NaiveDateTime::parse_from_str(&entry_timestamp, "%Y-%m-%dT%H:%M:%S") {
-                            let entry_time = time.and_utc().timestamp() as u64;
-                            let time_diff = now.saturating_sub(entry_time);
-                            
-                            if time_diff <= 300 {
-                                return Ok(true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(false)
-}
 
 // Function to find the most recent journal entry for a book (to delete after mutation)
 async fn find_latest_journal_entry_for_book(
@@ -852,8 +737,8 @@ async fn find_latest_journal_entry_for_book(
     let mut latest_timestamp = String::new();
     
     for entry in journals.reading_journals {
-        if let Some(book) = &entry.book {
-            if book.id == book_id {
+        if let Some(book) = &entry.book
+            && book.id == book_id {
                 let entry_timestamp = get_priority_timestamp(&entry);
                 if latest_timestamp.is_empty() || entry_timestamp > latest_timestamp {
                     latest_timestamp = entry_timestamp.clone();
@@ -861,7 +746,6 @@ async fn find_latest_journal_entry_for_book(
                     latest_entry_info = Some((entry.id.0 as i32, entry_timestamp));
                 }
             }
-        }
     }
     
     Ok(latest_entry_info)
@@ -954,11 +838,10 @@ struct BookStatusAnalysis {
 
 fn get_priority_timestamp(entry: &ReadingJournalEntry) -> String {
     // Priority: metadata.action_at > updated_at > created_at
-    if let Some(action_at_value) = entry.metadata.0.get("action_at") {
-        if let Some(action_at_str) = action_at_value.as_str() {
+    if let Some(action_at_value) = entry.metadata.0.get("action_at")
+        && let Some(action_at_str) = action_at_value.as_str() {
             return action_at_str.to_string();
         }
-    }
     
     // Second priority: updated_at (if different from created_at)
     // Special case: use created_at for user_book_read_started events
@@ -1056,7 +939,7 @@ fn analyze_journal_entries(
     for (entry, timestamp) in &entries_with_timestamps {
         entries_by_timestamp
             .entry(timestamp.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entry);
     }
 
@@ -1221,7 +1104,7 @@ async fn process_book_status_update(
         if let Some(book) = &journal.book {
             journals_by_book
                 .entry(book.id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(journal);
         }
     }
