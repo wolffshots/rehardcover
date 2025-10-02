@@ -1463,6 +1463,7 @@ dependencies = [
  "async-std",
  "cynic",
  "cynic-codegen",
+ "serde_json",
  "surf",
 ]
 
